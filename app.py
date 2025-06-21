@@ -6,108 +6,138 @@ import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.preprocessing import StandardScaler
 
-st.set_page_config(page_title="🎬 Movie Theatre Classifier", layout="wide", page_icon="🎥")
+st.set_page_config(page_title="🎥 Indian Movie Theatre Price Predictor", layout="wide")
 
-st.markdown("""
-    <style>
-        .main { background-color: #f8f9fa; }
-        .stButton > button {
-            background-color: #007bff;
-            color: white;
-            border-radius: 10px;
-        }
-        .stMetric { font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("🎥 Indian Movie Theatre Price Predictor")
+st.write("Predict whether the theatre pricing is **Low**, **Medium** or **High** based on features.")
 
-st.title("🎥 Indian Movie Theatre Pricing Classifier")
-st.write("Predict whether a theatre has a high or low average ticket price")
+# Load dataset
+try:
+    df = pd.read_csv("indian-movie-theatres.csv")
+except FileNotFoundError:
+    st.error("❌ 'indian-movie-theatres.csv' not found. Please ensure it's in the app folder.")
+    st.stop()
 
-page = st.sidebar.radio("Navigate", ["Data Preview", "Visualizations", "Modeling"])
-uploaded_file = st.sidebar.file_uploader("Upload the movie theatre dataset CSV", type=["csv"])
+# Basic cleaning
+df.dropna(subset=["average_ticket_price"], inplace=True)
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    df.dropna(subset=['average_ticket_price'], inplace=True)
-    df['Target'] = (df['average_ticket_price'] > 120).astype(int)
+# Define price category
+def classify_price(price):
+    if price < 100:
+        return "Low"
+    elif 100 <= price < 150:
+        return "Medium"
+    else:
+        return "High"
 
-    df.drop(['theatre_name', 'notes', 'source_of_information'], axis=1, inplace=True, errors='ignore')
-    df_encoded = pd.get_dummies(df, drop_first=True)
+df["Price_Category"] = df["average_ticket_price"].apply(classify_price)
 
-    X = df_encoded.drop("Target", axis=1)
-    y = df_encoded["Target"]
+# Drop irrelevant columns if they exist
+drop_cols = ['theatre_name', 'notes', 'source_of_information']
+df.drop(columns=[col for col in drop_cols if col in df.columns], inplace=True)
 
-    # Add small noise features
-    np.random.seed(42)
-    X["noise_1"] = np.random.rand(X.shape[0])
-    X["noise_2"] = np.random.rand(X.shape[0])
+# Handle missing numerical columns
+df["total_seats"] = df["total_seats"].fillna(df["total_seats"].median())
+df["no_screens"] = df["no_screens"].fillna(df["no_screens"].median())
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, shuffle=True)
+# Store all category levels for consistency later
+all_types = df['type'].fillna('Unknown').unique().tolist() if 'type' in df.columns else []
+all_cities = df['city'].fillna('Unknown').unique().tolist() if 'city' in df.columns else []
 
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+# Encode categorical columns
+if 'type' in df.columns:
+    df['type'] = df['type'].fillna('Unknown')
+    df = pd.get_dummies(df, columns=['type'])
+if 'city' in df.columns:
+    df['city'] = df['city'].fillna('Unknown')
+    df = pd.get_dummies(df, columns=['city'])
 
-    model = LogisticRegression(C=0.35, max_iter=100, solver="liblinear")
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
+# Feature selection
+selected_features = ['total_seats', 'no_screens'] + [col for col in df.columns if col.startswith('type_') or col.startswith('city_')]
+X = df[selected_features]
+y = df["Price_Category"]
 
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+
+# Scale
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# Train model
+model = LogisticRegression(multi_class='ovr', solver='liblinear')
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+
+# Sidebar navigation
+page = st.sidebar.radio("Navigate", ["Data Preview", "Visualizations", "Model", "Predict"])
+
+# Page: Data Preview
 if page == "Data Preview":
-    st.header("🧾 Dataset Overview")
-    if uploaded_file:
-        st.dataframe(df.head())
-        st.markdown(f"**Shape**: {df.shape[0]} rows × {df.shape[1]} columns")
-        st.bar_chart(df['Target'].value_counts())
-    else:
-        st.info("📎 Please upload a dataset to get started.")
+    st.subheader("📄 Dataset Preview")
+    st.dataframe(df.head())
+    st.markdown(f"**Rows:** {df.shape[0]} | **Columns:** {df.shape[1]}")
+    st.write(df["Price_Category"].value_counts())
 
+# Page: Visualizations
 elif page == "Visualizations":
-    st.header("📊 Data Visualizations")
-    if uploaded_file:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("🎟 Ticket Price Distribution")
-            fig1, ax1 = plt.subplots()
-            sns.histplot(df['average_ticket_price'], bins=20, kde=True, ax=ax1)
-            st.pyplot(fig1)
-        with col2:
-            st.subheader("🎯 Target Distribution")
-            fig2, ax2 = plt.subplots()
-            sns.countplot(x=df['Target'], ax=ax2)
-            st.pyplot(fig2)
+    st.subheader("📊 Visualizations")
+    fig1, ax1 = plt.subplots()
+    sns.histplot(df["average_ticket_price"], bins=20, kde=True, ax=ax1)
+    st.pyplot(fig1)
 
-        st.subheader("📌 Correlation Heatmap")
-        fig3, ax3 = plt.subplots(figsize=(10, 6))
-        sns.heatmap(df_encoded.corr(), annot=True, fmt=".2f", cmap="coolwarm", ax=ax3)
-        st.pyplot(fig3)
-    else:
-        st.info("📎 Upload a dataset to visualize features.")
+    fig2, ax2 = plt.subplots()
+    sns.countplot(x="Price_Category", data=df, ax=ax2)
+    st.pyplot(fig2)
 
-elif page == "Modeling":
-    st.header("🤖 Logistic Regression Classifier")
-    if uploaded_file:
-        st.metric(label="🎯 Model Accuracy", value=f"{acc * 100:.2f}%")
-        if 0.80 <= acc <= 0.90:
-            st.success("✅ Accuracy is optimal between 80-90%.")
-        elif acc > 0.90:
-            st.warning("⚠️ Accuracy might be too high; check for overfitting.")
-        else:
-            st.warning("⚠️ Consider improving feature engineering or model tuning.")
+# Page: Model
+elif page == "Model":
+    st.subheader("🤖 Model Evaluation")
+    acc = accuracy_score(y_test, y_pred)
+    st.metric("Accuracy", f"{acc * 100:.2f}%")
+    st.text("Classification Report:")
+    st.text(classification_report(y_test, y_pred))
 
-        st.subheader("📋 Classification Report")
-        st.text(classification_report(y_test, y_pred))
+    st.subheader("📉 Confusion Matrix")
+    fig3, ax3 = plt.subplots()
+    sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap="Blues", ax=ax3)
+    st.pyplot(fig3)
 
-        st.subheader("🔍 Confusion Matrix")
-        fig4, ax4 = plt.subplots()
-        sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap='Blues', ax=ax4)
-        st.pyplot(fig4)
+# Page: Predict
+elif page == "Predict":
+    st.subheader("🎯 Make a Prediction")
 
-        st.subheader("📊 Feature Importance")
-        coef = pd.Series(model.coef_[0], index=X.columns)
-        st.bar_chart(coef.sort_values(ascending=False))
-    else:
-        st.info("📎 Upload a dataset to build and evaluate the model.")
+    user_input = {
+        'total_seats': int(st.number_input("Total Seats", value=100)),
+        'no_screens': int(st.number_input("Number of Screens", value=1))
+    }
+
+    selected_type = st.selectbox("Select Theatre Type", all_types)
+    selected_city = st.selectbox("Select City", all_cities)
+
+    # One-hot encode the dropdown selections
+    for val in all_types:
+        col_name = f'type_{val}'
+        user_input[col_name] = 1 if val == selected_type else 0
+
+    for val in all_cities:
+        col_name = f'city_{val}'
+        user_input[col_name] = 1 if val == selected_city else 0
+
+    if st.button("Predict"):
+        input_df = pd.DataFrame([user_input])
+        # Ensure all features match training features
+        for col in selected_features:
+            if col not in input_df.columns:
+                input_df[col] = 0
+        input_df = input_df[selected_features]
+        input_scaled = scaler.transform(input_df)
+        prediction = model.predict(input_scaled)[0]
+        confidence = model.predict_proba(input_scaled).max()
+
+        st.success(f"🏷 Predicted Price Category: **{prediction}**")
+        st.info(f"🔍 Confidence: {confidence * 100:.2f}%")
